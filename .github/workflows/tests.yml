@@ -1,0 +1,49 @@
+name: Venture Forge tests and portable Windows install
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install source dependencies
+        run: |
+          python -m pip install -r requirements-dev.txt
+          python -m pip install -e ./framework/engine
+      - name: Test core and installer logic
+        run: python -m pytest -q tests
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Installer source checks
+        shell: pwsh
+        run: |
+          python -m pip install -r requirements-dev.txt
+          python -m pip install -e ./framework/engine
+          python -m pytest -q tests
+          $files = @(Get-ChildItem -Recurse -Filter '*.bat' -File)
+          if ($files.Count -ne 2) { throw 'Exactly two BAT files must remain' }
+      - name: Install bundled server, then separate Forge on fresh Windows paths
+        shell: pwsh
+        run: |
+          $server = Join-Path $env:RUNNER_TEMP 'App Server Prerequisite'
+          $forge = Join-Path $env:RUNNER_TEMP 'Forge App Instance'
+          python tools/forge_install.py --install-server "$server" --forge "$forge"
+          if ($LASTEXITCODE -ne 0) { throw 'Fresh Windows installation failed' }
+          if (!(Test-Path "$server\.venv\Scripts\python.exe")) { throw 'Missing server runtime' }
+          if (!(Test-Path "$forge\.venv\Scripts\python.exe")) { throw 'Missing Forge runtime' }
+          if (!(Test-Path "$forge\app\app.py")) { throw 'Missing Forge app' }
+          & "$forge\.venv\Scripts\python.exe" "$forge\tools\forge_launcher.py" start --background
+          if ($LASTEXITCODE -ne 0) { throw 'Forge startup failed' }
+          & "$forge\.venv\Scripts\python.exe" "$forge\tools\forge_launcher.py" stop
+          if ($LASTEXITCODE -ne 0) { throw 'Forge stop failed' }
